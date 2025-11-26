@@ -1,0 +1,176 @@
+name: Build Caddy with NaiveProxy
+
+on:
+  workflow_dispatch:  # 手动触发
+  schedule:
+    - cron: '0 0 * * 0'  # 每周日自动检查更新
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+            name: linux-amd64
+          - os: ubuntu-latest
+            arch: arm64
+            name: linux-arm64
+    
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      
+      - name: Set up QEMU (for ARM64)
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@v3
+      
+      - name: Install xcaddy
+        run: go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+      
+      - name: Build Caddy with forwardproxy (naive fork)
+        run: |
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            GOARCH=arm64 ~/go/bin/xcaddy build \
+              --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive
+          else
+            ~/go/bin/xcaddy build \
+              --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive
+          fi
+      
+      - name: Get Caddy version
+        id: caddy_version
+        run: |
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            # For ARM64, extract version from binary metadata
+            CADDY_VERSION=$(strings caddy | grep -oP 'v\d+\.\d+\.\d+' | head -1 || echo "v2.8.4")
+          else
+            CADDY_VERSION=$(./caddy version | head -n1 | awk '{print $1}')
+          fi
+          echo "version=${CADDY_VERSION}" >> $GITHUB_OUTPUT
+          echo "Caddy version: ${CADDY_VERSION}"
+      
+      - name: Rename binary
+        run: |
+          mv caddy caddy-${{ matrix.name }}
+      
+      - name: Calculate SHA256
+        id: sha256
+        run: |
+          SHA256=$(sha256sum caddy-${{ matrix.name }} | awk '{print $1}')
+          echo "sha256=${SHA256}" >> $GITHUB_OUTPUT
+          echo "${SHA256}  caddy-${{ matrix.name }}" > caddy-${{ matrix.name }}.sha256
+          echo "SHA256: ${SHA256}"
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: caddy-${{ matrix.name }}
+          path: |
+            caddy-${{ matrix.name }}
+            caddy-${{ matrix.name }}.sha256
+  
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+      
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          find . -name "caddy-*" -type f -exec mv {} release/ \;
+          cd release
+          
+          # Create combined checksums file
+          cat *.sha256 > checksums.txt
+          rm *.sha256
+          
+          # List files
+          ls -lh
+      
+      - name: Get version
+        id: version
+        run: |
+          # Extract version from one of the binaries
+          chmod +x release/caddy-linux-amd64
+          VERSION=$(release/caddy-linux-amd64 version | head -n1 | awk '{print $1}')
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Release version: ${VERSION}"
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Caddy ${{ steps.version.outputs.version }} with NaiveProxy
+          body: |
+            ## Caddy with NaiveProxy forwardproxy plugin
+            
+            **Caddy Version**: `${{ steps.version.outputs.version }}`
+            **Build Date**: ${{ github.event.repository.updated_at }}
+            **Go Version**: 1.22
+            
+            ### Downloads
+            
+            | Platform | File | Size |
+            |----------|------|------|
+            | Linux x64 | [caddy-linux-amd64](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/caddy-linux-amd64) | ~45 MB |
+            | Linux ARM64 | [caddy-linux-arm64](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/caddy-linux-arm64) | ~45 MB |
+            | Checksums | [checksums.txt](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/checksums.txt) | - |
+            
+            ### Included Modules
+            - ✅ `http.handlers.forward_proxy` (NaiveProxy fork)
+            - ✅ All standard Caddy modules
+            
+            ### Quick Start
+            
+            ```bash
+            # Download (x64)
+            wget https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/caddy-linux-amd64
+            
+            # Verify checksum
+            wget https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/checksums.txt
+            sha256sum -c checksums.txt --ignore-missing
+            
+            # Make executable
+            mv caddy-linux-amd64 caddy
+            chmod +x caddy
+            
+            # Check version
+            ./caddy version
+            
+            # List modules
+            ./caddy list-modules | grep forward_proxy
+            ```
+            
+            ### Build Info
+            
+            Built with:
+            ```bash
+            xcaddy build --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive
+            ```
+            
+            ### Verification
+            
+            All binaries include SHA256 checksums in `checksums.txt`. Always verify your download:
+            
+            ```bash
+            sha256sum -c checksums.txt --ignore-missing
+            ```
+          files: |
+            release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
