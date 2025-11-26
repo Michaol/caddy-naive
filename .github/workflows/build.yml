@@ -3,7 +3,11 @@ name: Build Caddy with NaiveProxy
 on:
   workflow_dispatch:  # 手动触发
   schedule:
-    - cron: '0 0 * * 0'  # 每周日自动检查更新
+
+permissions:
+  contents: write
+
+    - cron: '0 0 * * 0'  # 每周日自动检查更�?
 
 jobs:
   build:
@@ -132,8 +136,8 @@ jobs:
             | Checksums | [checksums.txt](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/checksums.txt) | - |
             
             ### Included Modules
-            - ✅ `http.handlers.forward_proxy` (NaiveProxy fork)
-            - ✅ All standard Caddy modules
+            - �?`http.handlers.forward_proxy` (NaiveProxy fork)
+            - �?All standard Caddy modules
             
             ### Quick Start
             
@@ -174,3 +178,4 @@ jobs:
             release/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
