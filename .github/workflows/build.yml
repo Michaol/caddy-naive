@@ -1,16 +1,45 @@
 name: Build Caddy with NaiveProxy
 
 on:
-  workflow_dispatch:  # 手动触发
+  workflow_dispatch:
   schedule:
+    - cron: '0 0 * * *'  # 每天 UTC 00:00 检查更新
 
 permissions:
   contents: write
 
-    - cron: '0 0 * * 0'  # 每周日自动检查更�?
-
 jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      caddy_version: ${{ steps.check.outputs.caddy_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Check Caddy version
+        id: check
+        run: |
+          # 获取最新 Caddy 版本
+          LATEST_CADDY=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "Latest Caddy version: $LATEST_CADDY"
+          echo "caddy_version=$LATEST_CADDY" >> $GITHUB_OUTPUT
+          
+          # 检查是否已经有这个版本的 Release
+          if gh release view "$LATEST_CADDY" --repo ${{ github.repository }} >/dev/null 2>&1; then
+            echo "Release $LATEST_CADDY already exists, skipping build"
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          else
+            echo "New version detected, will build"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build:
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true' || github.event_name == 'workflow_dispatch'
     strategy:
       matrix:
         include:
@@ -53,8 +82,7 @@ jobs:
         id: caddy_version
         run: |
           if [ "${{ matrix.arch }}" = "arm64" ]; then
-            # For ARM64, extract version from binary metadata
-            CADDY_VERSION=$(strings caddy | grep -oP 'v\d+\.\d+\.\d+' | head -1 || echo "v2.8.4")
+            CADDY_VERSION="${{ needs.check-version.outputs.caddy_version }}"
           else
             CADDY_VERSION=$(./caddy version | head -n1 | awk '{print $1}')
           fi
@@ -62,8 +90,7 @@ jobs:
           echo "Caddy version: ${CADDY_VERSION}"
       
       - name: Rename binary
-        run: |
-          mv caddy caddy-${{ matrix.name }}
+        run: mv caddy caddy-${{ matrix.name }}
       
       - name: Calculate SHA256
         id: sha256
@@ -82,9 +109,8 @@ jobs:
             caddy-${{ matrix.name }}.sha256
   
   release:
-    needs: build
+    needs: [check-version, build]
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     
     steps:
       - name: Checkout
@@ -109,9 +135,11 @@ jobs:
       - name: Get version
         id: version
         run: |
-          # Extract version from one of the binaries
-          chmod +x release/caddy-linux-amd64
-          VERSION=$(release/caddy-linux-amd64 version | head -n1 | awk '{print $1}')
+          VERSION="${{ needs.check-version.outputs.caddy_version }}"
+          if [ -z "$VERSION" ]; then
+            chmod +x release/caddy-linux-amd64
+            VERSION=$(release/caddy-linux-amd64 version | head -n1 | awk '{print $1}')
+          fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Release version: ${VERSION}"
       
@@ -136,8 +164,8 @@ jobs:
             | Checksums | [checksums.txt](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/checksums.txt) | - |
             
             ### Included Modules
-            - �?`http.handlers.forward_proxy` (NaiveProxy fork)
-            - �?All standard Caddy modules
+            - ✅ `http.handlers.forward_proxy` (NaiveProxy fork)
+            - ✅ All standard Caddy modules
             
             ### Quick Start
             
@@ -178,4 +206,3 @@ jobs:
             release/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
