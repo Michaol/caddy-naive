@@ -3,7 +3,7 @@ name: Build Caddy with NaiveProxy
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'  # 每天 UTC 00:00 检查更新
+    - cron: "0 0 * * *" # 每天 UTC 00:00 检查更新
 
 permissions:
   contents: write
@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      
+
       - name: Check Caddy version
         id: check
         run: |
@@ -25,7 +25,7 @@ jobs:
           LATEST_CADDY=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest | jq -r .tag_name)
           echo "Latest Caddy version: $LATEST_CADDY"
           echo "caddy_version=$LATEST_CADDY" >> $GITHUB_OUTPUT
-          
+
           # 检查是否已经有这个版本的 Release
           if gh release view "$LATEST_CADDY" --repo ${{ github.repository }} >/dev/null 2>&1; then
             echo "Release $LATEST_CADDY already exists, skipping build"
@@ -49,25 +49,26 @@ jobs:
           - os: ubuntu-latest
             arch: arm64
             name: linux-arm64
-    
+
     runs-on: ${{ matrix.os }}
-    
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
-      
+          go-version: "1.22"
+          cache: false
+
       - name: Set up QEMU (for ARM64)
         if: matrix.arch == 'arm64'
         uses: docker/setup-qemu-action@v3
-      
+
       - name: Install xcaddy
         run: go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
-      
+
       - name: Build Caddy with forwardproxy (naive fork)
         run: |
           if [ "${{ matrix.arch }}" = "arm64" ]; then
@@ -77,7 +78,7 @@ jobs:
             ~/go/bin/xcaddy build \
               --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive
           fi
-      
+
       - name: Get Caddy version
         id: caddy_version
         run: |
@@ -88,10 +89,10 @@ jobs:
           fi
           echo "version=${CADDY_VERSION}" >> $GITHUB_OUTPUT
           echo "Caddy version: ${CADDY_VERSION}"
-      
+
       - name: Rename binary
         run: mv caddy caddy-${{ matrix.name }}
-      
+
       - name: Calculate SHA256
         id: sha256
         run: |
@@ -99,7 +100,7 @@ jobs:
           echo "sha256=${SHA256}" >> $GITHUB_OUTPUT
           echo "${SHA256}  caddy-${{ matrix.name }}" > caddy-${{ matrix.name }}.sha256
           echo "SHA256: ${SHA256}"
-      
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -107,31 +108,31 @@ jobs:
           path: |
             caddy-${{ matrix.name }}
             caddy-${{ matrix.name }}.sha256
-  
+
   release:
     needs: [check-version, build]
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
-      
+
       - name: Prepare release files
         run: |
           mkdir -p release
           find . -name "caddy-*" -type f -exec mv {} release/ \;
           cd release
-          
+
           # Create combined checksums file
           cat *.sha256 > checksums.txt
           rm *.sha256
-          
+
           # List files
           ls -lh
-      
+
       - name: Get version
         id: version
         run: |
@@ -142,7 +143,7 @@ jobs:
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Release version: ${VERSION}"
-      
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
@@ -150,55 +151,55 @@ jobs:
           name: Caddy ${{ steps.version.outputs.version }} with NaiveProxy
           body: |
             ## Caddy with NaiveProxy forwardproxy plugin
-            
+
             **Caddy Version**: `${{ steps.version.outputs.version }}`
             **Build Date**: ${{ github.event.repository.updated_at }}
             **Go Version**: 1.22
-            
+
             ### Downloads
-            
+
             | Platform | File | Size |
             |----------|------|------|
             | Linux x64 | [caddy-linux-amd64](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/caddy-linux-amd64) | ~45 MB |
             | Linux ARM64 | [caddy-linux-arm64](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/caddy-linux-arm64) | ~45 MB |
             | Checksums | [checksums.txt](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/checksums.txt) | - |
-            
+
             ### Included Modules
             - ✅ `http.handlers.forward_proxy` (NaiveProxy fork)
             - ✅ All standard Caddy modules
-            
+
             ### Quick Start
-            
+
             ```bash
             # Download (x64)
             wget https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/caddy-linux-amd64
-            
+
             # Verify checksum
             wget https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/checksums.txt
             sha256sum -c checksums.txt --ignore-missing
-            
+
             # Make executable
             mv caddy-linux-amd64 caddy
             chmod +x caddy
-            
+
             # Check version
             ./caddy version
-            
+
             # List modules
             ./caddy list-modules | grep forward_proxy
             ```
-            
+
             ### Build Info
-            
+
             Built with:
             ```bash
             xcaddy build --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive
             ```
-            
+
             ### Verification
-            
+
             All binaries include SHA256 checksums in `checksums.txt`. Always verify your download:
-            
+
             ```bash
             sha256sum -c checksums.txt --ignore-missing
             ```
