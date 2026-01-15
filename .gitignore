@@ -1,0 +1,12 @@
+# Caddy configuration files
+Caddyfile
+*.caddyfile
+
+# Certificates
+*.cer
+*.key
+*.pem
+
+# Build output
+caddy
+caddy-*
