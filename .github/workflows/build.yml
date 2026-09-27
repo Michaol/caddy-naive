@@ -20,9 +20,22 @@ jobs:
       - name: Check Caddy version
         id: check
         run: |
-          # 获取最新 Caddy 版本
-          LATEST_CADDY=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest | jq -r .tag_name)
-          echo "Latest Caddy version: $LATEST_CADDY"
+          # 获取最新 Caddy 版本（带 token，避免未认证限流返回 null）
+          LATEST_CADDY=$(curl -sSf \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/caddyserver/caddy/releases/latest \
+            | jq -r '.tag_name // empty')
+          echo "Latest Caddy version: ${LATEST_CADDY:-<empty>}"
+
+          # 必须是形如 v2.11.4 的正式版 tag，空/null/异常值直接失败
+          if ! echo "$LATEST_CADDY" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Refusing to build: invalid Caddy version '$LATEST_CADDY'"
+            echo "caddy_version=" >> $GITHUB_OUTPUT
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
           echo "caddy_version=$LATEST_CADDY" >> $GITHUB_OUTPUT
 
           # 检查是否已经有这个版本的 Release
@@ -136,6 +149,13 @@ jobs:
             chmod +x release/caddy-linux-amd64
             VERSION=$(release/caddy-linux-amd64 version | head -n1 | awk '{print $1}')
           fi
+
+          # 禁止用空值/null 发版
+          if ! echo "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Refusing to release: invalid version '$VERSION'"
+            exit 1
+          fi
+
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
           echo "Release version: ${VERSION}"
