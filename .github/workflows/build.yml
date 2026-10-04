@@ -71,8 +71,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version: "1.26"
           cache: false
+
+      - name: Allow Go toolchain auto-download
+        run: echo "GOTOOLCHAIN=auto" >> "$GITHUB_ENV"
 
       - name: Install xcaddy
         run: go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
@@ -170,7 +173,7 @@ jobs:
 
             **Caddy Version**: `${{ steps.version.outputs.version }}`
             **Build Date**: ${{ steps.version.outputs.date }}
-            **Go Version**: 1.25
+            **Go Version**: 1.26
 
             ### Downloads
 
